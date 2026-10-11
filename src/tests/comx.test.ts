@@ -7,6 +7,11 @@ import {
   parseComxChapters,
   parseComxPages,
   formatSlugTitle,
+  extractImageSrc,
+  getComxLocalCatalog,
+  getComxFallbackCatalog,
+  searchComxFallback,
+  COMX_PAGE_SIZE,
   comxSource,
 } from '../lib/sources/comx';
 
@@ -203,6 +208,56 @@ test('Com-X parser', async (t) => {
     assert.ok(comxSource.imageHosts.some(re => re.test('rus.com-x.life')));
     assert.ok(comxSource.imageHosts.some(re => re.test('img.com-x.life')));
     assert.ok(!comxSource.imageHosts.some(re => re.test('other-site.com')));
+  });
+
+  await t.test('extractImageSrc skips data:image placeholders and prefers data-src', () => {
+    const $mock = require('cheerio').load(`
+      <div>
+        <img id="img1" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" data-src="https://img.com-x.life/uploads/posts/real.jpg">
+        <img id="img2" src="https://img.com-x.life/uploads/posts/direct.jpg">
+        <img id="img3" data-original="https://img.com-x.life/uploads/posts/orig.jpg">
+      </div>
+    `);
+    assert.equal(extractImageSrc($mock('#img1')), 'https://img.com-x.life/uploads/posts/real.jpg');
+    assert.equal(extractImageSrc($mock('#img2')), 'https://img.com-x.life/uploads/posts/direct.jpg');
+    assert.equal(extractImageSrc($mock('#img3')), 'https://img.com-x.life/uploads/posts/orig.jpg');
+  });
+
+  await t.test('loads local Com-X catalog with 1280+ titles and proxied covers', () => {
+    const catalog = getComxLocalCatalog();
+    assert.ok(catalog.length >= 1200, `Expected at least 1200 items, got ${catalog.length}`);
+    const first = catalog[0];
+    assert.ok(first.id.startsWith('comx~'));
+    assert.ok(first.title.length > 0);
+    assert.ok(first.coverUrl.includes('/api/proxy-image?src=comx&url='));
+    assert.ok(Boolean(first.sourceUrl && first.sourceUrl.includes('com-x.life')));
+  });
+
+  await t.test('paginates fallback catalog across multiple pages', async () => {
+    const page1 = await getComxFallbackCatalog('popular', 1);
+    assert.equal(page1.items.length, COMX_PAGE_SIZE);
+    assert.equal(page1.hasNextPage, true);
+
+    const page2 = await getComxFallbackCatalog('popular', 2);
+    assert.equal(page2.items.length, COMX_PAGE_SIZE);
+    assert.equal(page2.hasNextPage, true);
+
+    // Items on page 1 and page 2 should be different
+    assert.notEqual(page1.items[0].id, page2.items[0].id);
+
+    // Sorted by rating: first item has high rating
+    assert.ok(page1.items[0].rating >= page1.items[page1.items.length - 1].rating);
+  });
+
+  await t.test('searches fallback catalog by title, altTitle, and keywords', async () => {
+    const searchRes = await searchComxFallback('Берсерк', 1);
+    assert.ok(searchRes.items.length > 0);
+    const berserk = searchRes.items.find(m => m.title.includes('Берсерк') || m.altTitle?.includes('Berserk'));
+    assert.ok(berserk, 'Berserk should be found');
+
+    const englishSearch = await searchComxFallback('Overgeared', 1);
+    assert.ok(englishSearch.items.length > 0);
+    assert.ok(englishSearch.items.some(m => m.altTitle?.toLowerCase().includes('overgeared') || m.title.includes('всеоружии')));
   });
 });
 

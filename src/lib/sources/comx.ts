@@ -1,6 +1,8 @@
 import * as cheerio from 'cheerio';
 import type { CheerioAPI } from 'cheerio';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { MangaListResult, Page, SChapter, SManga, SortMode } from '../types';
 import { MangaSource, makeMangaId, proxied } from './base';
 import { BROWSER_UA, SourceError, cached, cleanText, parseChapterNumber, toIsoDate } from './http';
@@ -315,6 +317,22 @@ export function formatSlugTitle(slug: string): string {
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 }
 
+export function extractImageSrc($el: cheerio.Cheerio<any>): string {
+  const candidates = [
+    $el.attr('data-src'),
+    $el.attr('data-original'),
+    $el.attr('data-lazy-src'),
+    $el.attr('src'),
+  ];
+  for (const c of candidates) {
+    const val = (c || '').trim();
+    if (val && !val.startsWith('data:image')) {
+      return val;
+    }
+  }
+  return (candidates[0] || candidates[3] || '').trim();
+}
+
 export function parseComxCatalog(html: string, $in?: CheerioAPI): MangaListResult {
   const $ = $in || cheerio.load(html);
   const items: SManga[] = [];
@@ -339,7 +357,7 @@ export function parseComxCatalog(html: string, $in?: CheerioAPI): MangaListResul
     }
 
     const imgEl = card.find('img').first();
-    const posterSrc = imgEl.attr('data-src') || imgEl.attr('src');
+    const posterSrc = extractImageSrc(imgEl);
     const coverUrl = posterSrc
       ? (posterSrc.startsWith('http') ? posterSrc : `${COMX_BASE}${posterSrc.startsWith('/') ? '' : '/'}${posterSrc}`)
       : '';
@@ -396,7 +414,7 @@ export function parseComxCatalog(html: string, $in?: CheerioAPI): MangaListResul
     }
 
     const imgEl = card.find('img').first();
-    const posterSrc = imgEl.attr('data-src') || imgEl.attr('src');
+    const posterSrc = extractImageSrc(imgEl);
     const coverUrl = posterSrc
       ? (posterSrc.startsWith('http') ? posterSrc : `${COMX_BASE}${posterSrc.startsWith('/') ? '' : '/'}${posterSrc}`)
       : '';
@@ -475,7 +493,7 @@ export function parseComxDetails(html: string, slug: string, $in?: CheerioAPI): 
   });
 
   const imgEl = $('.page__poster img, .poster__img img, .img-fit-cover img').first();
-  const posterSrc = imgEl.attr('data-src') || imgEl.attr('src');
+  const posterSrc = extractImageSrc(imgEl);
   const coverUrl = posterSrc
     ? (posterSrc.startsWith('http') ? posterSrc : `${COMX_BASE}${posterSrc.startsWith('/') ? '' : '/'}${posterSrc}`)
     : '';
@@ -632,6 +650,111 @@ export function parseComxPages(html: string, $in?: CheerioAPI): Page[] {
   return pages;
 }
 
+let comxCatalogCache: SManga[] | null = null;
+const COMX_CATALOG_FILE = path.join(process.cwd(), 'data', 'comx-catalog.json');
+
+export function getComxLocalCatalog(): SManga[] {
+  if (comxCatalogCache) return comxCatalogCache;
+  try {
+    if (fs.existsSync(COMX_CATALOG_FILE)) {
+      const raw = fs.readFileSync(COMX_CATALOG_FILE, 'utf-8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data)) {
+        comxCatalogCache = data.map((item: any) => ({
+          id: item.id || makeMangaId('comx', item.slug),
+          sourceId: 'comx',
+          title: item.title || item.slug,
+          altTitle: item.altTitle || undefined,
+          description: item.description || '',
+          coverUrl: proxied(item.coverUrl || '', 'comx'),
+          authors: item.authors || [],
+          status: item.status || 'UNKNOWN',
+          rating: typeof item.rating === 'number' ? item.rating : 0,
+          genres: Array.isArray(item.genres) ? item.genres : [],
+          type: item.type || undefined,
+          releaseYear: typeof item.releaseYear === 'number' ? item.releaseYear : undefined,
+          sourceUrl: item.sourceUrl || `${COMX_BASE}/${item.slug}.html`,
+        }));
+        return comxCatalogCache;
+      }
+    }
+  } catch (err) {
+    console.error('[comx] Failed to load local catalog:', err);
+  }
+  return [];
+}
+
+export const COMX_PAGE_SIZE = 24;
+
+export async function getComxFallbackCatalog(sort: SortMode = 'popular', page: number = 1): Promise<MangaListResult> {
+  const localItems = getComxLocalCatalog();
+  let allItems = [...localItems];
+  try {
+    const rssItems = await fetchComxRssItems();
+    if (rssItems.length > 0) {
+      const existingSlugs = new Set(allItems.map(m => m.id));
+      const freshItems = rssItems.filter(r => !existingSlugs.has(r.id));
+      if (freshItems.length > 0) {
+        allItems = [...freshItems, ...allItems];
+      }
+    }
+  } catch {}
+
+  if (sort === 'popular' || sort === 'rating') {
+    allItems.sort((a, b) => (b.rating || 0) - (a.rating || 0));
+  } else if (sort === 'release_date') {
+    allItems.sort((a, b) => (b.releaseYear || 0) - (a.releaseYear || 0));
+  } else if (sort === 'name_asc' || sort === 'name_ru_asc') {
+    allItems.sort((a, b) => a.title.localeCompare(b.title, 'ru'));
+  }
+
+  const start = Math.max(0, (page - 1) * COMX_PAGE_SIZE);
+  const end = start + COMX_PAGE_SIZE;
+  const items = allItems.slice(start, end);
+  const hasNextPage = end < allItems.length;
+
+  return { items, hasNextPage };
+}
+
+export async function searchComxFallback(query: string, page: number = 1): Promise<MangaListResult> {
+  const localItems = getComxLocalCatalog();
+  let allItems = [...localItems];
+  try {
+    const rssItems = await fetchComxRssItems();
+    if (rssItems.length > 0) {
+      const existingSlugs = new Set(allItems.map(m => m.id));
+      const freshItems = rssItems.filter(r => !existingSlugs.has(r.id));
+      if (freshItems.length > 0) {
+        allItems = [...freshItems, ...allItems];
+      }
+    }
+  } catch {}
+
+  const q = query.trim().toLowerCase();
+  const qTerms = q.split(/\s+/).filter(Boolean);
+
+  const matches = allItems.filter(item => {
+    const title = item.title.toLowerCase();
+    const alt = (item.altTitle || '').toLowerCase();
+    const desc = (item.description || '').toLowerCase();
+    const genres = (item.genres || []).map(g => g.toLowerCase()).join(' ');
+
+    return qTerms.every(term =>
+      title.includes(term) ||
+      alt.includes(term) ||
+      desc.includes(term) ||
+      genres.includes(term)
+    );
+  });
+
+  const start = Math.max(0, (page - 1) * COMX_PAGE_SIZE);
+  const end = start + COMX_PAGE_SIZE;
+  const items = matches.slice(start, end);
+  const hasNextPage = end < matches.length;
+
+  return { items, hasNextPage };
+}
+
 export const comxSource: MangaSource = {
   meta: {
     id: 'comx',
@@ -655,15 +778,8 @@ export const comxSource: MangaSource = {
         const html = await client.fetchHtml(`${COMX_BASE}${path}`);
         return parseComxCatalog(html);
       } catch (err: any) {
-        const is401 = err?.status === 401 || err?.statusCode === 401 || String(err?.message || '').includes('401');
-        if (is401 && page === 1) {
-          console.warn('[comx] 401 gate on catalog, falling back to rss.xml...');
-          const items = await fetchComxRssItems();
-          if (items.length > 0) {
-            return { items, hasNextPage: false };
-          }
-        }
-        throw err;
+        console.warn(`[comx] Live catalog fetch failed for sort=${sort} page=${page} (${err?.message}), using catalog fallback`);
+        return getComxFallbackCatalog(sort, page);
       }
     });
   },
@@ -676,19 +792,8 @@ export const comxSource: MangaSource = {
         const html = await client.fetchHtml(`${COMX_BASE}${path}`);
         return parseComxCatalog(html);
       } catch (err: any) {
-        const is401 = err?.status === 401 || err?.statusCode === 401 || String(err?.message || '').includes('401');
-        if (is401) {
-          console.warn(`[comx] 401 gate on search "${query}", filtering RSS items...`);
-          const rssItems = await fetchComxRssItems();
-          const qLower = query.trim().toLowerCase();
-          const filtered = rssItems.filter(item =>
-            item.title.toLowerCase().includes(qLower) ||
-            item.altTitle?.toLowerCase().includes(qLower) ||
-            item.genres?.some(g => g.toLowerCase().includes(qLower))
-          );
-          return { items: filtered, hasNextPage: false };
-        }
-        throw err;
+        console.warn(`[comx] Live search failed for "${query}" page=${page} (${err?.message}), using catalog fallback`);
+        return searchComxFallback(query, page);
       }
     });
   },
@@ -700,30 +805,38 @@ export const comxSource: MangaSource = {
         const html = await client.fetchHtml(`${COMX_BASE}/${encodeURIComponent(cleanSlug)}.html`);
         return parseComxDetails(html, cleanSlug);
       } catch (err: any) {
-        const is401 = err?.status === 401 || err?.statusCode === 401 || String(err?.message || '').includes('401');
-        if (is401) {
-          console.warn(`[comx] 401 gate on details for ${cleanSlug}, searching RSS fallback...`);
-          const rssItems = await fetchComxRssItems();
-          const found = rssItems.find(
-            m => m.id === makeMangaId('comx', cleanSlug) || (m.sourceUrl && m.sourceUrl.includes(cleanSlug))
-          );
-          if (found) {
-            return found;
-          }
+        console.warn(`[comx] Live details failed for ${cleanSlug} (${err?.message}), checking catalog fallback...`);
+        const localItems = getComxLocalCatalog();
+        const found = localItems.find(
+          m => m.id === makeMangaId('comx', cleanSlug) || (m.sourceUrl && m.sourceUrl.includes(cleanSlug))
+        );
+        if (found) {
           return {
-            id: makeMangaId('comx', cleanSlug),
-            sourceId: 'comx',
-            title: formatSlugTitle(cleanSlug),
-            description: 'Сервер Com-X.life временно ограничивает прямой доступ к странице тайтла для зарубежного хостинга. Читайте этот тайтл прямо на источнике com-x.life.',
-            coverUrl: '',
-            authors: [],
-            status: 'UNKNOWN',
-            rating: 0,
-            genres: [],
-            sourceUrl: `${COMX_BASE}/${cleanSlug}.html`,
+            ...found,
+            description:
+              found.description ||
+              `Комикс / манхва «${found.title}» из каталога Com-X. Читайте на Tsundoku или на com-x.life.`,
           };
         }
-        throw err;
+        const rssItems = await fetchComxRssItems();
+        const rssFound = rssItems.find(
+          m => m.id === makeMangaId('comx', cleanSlug) || (m.sourceUrl && m.sourceUrl.includes(cleanSlug))
+        );
+        if (rssFound) {
+          return rssFound;
+        }
+        return {
+          id: makeMangaId('comx', cleanSlug),
+          sourceId: 'comx',
+          title: formatSlugTitle(cleanSlug),
+          description: 'Сервер Com-X.life временно ограничивает прямой доступ к странице тайтла для зарубежного хостинга. Читайте этот тайтл прямо на источнике com-x.life.',
+          coverUrl: '',
+          authors: [],
+          status: 'UNKNOWN',
+          rating: 0,
+          genres: [],
+          sourceUrl: `${COMX_BASE}/${cleanSlug}.html`,
+        };
       }
     });
   },
