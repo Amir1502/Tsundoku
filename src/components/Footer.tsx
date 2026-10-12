@@ -18,7 +18,7 @@ export default function Footer() {
             . Контент принадлежит правообладателям и сайтам-источникам.
           </div>
         </div>
-        <div>Источники: MangaLib · ReManga · Com-X · MangaMir · MangaDex · Книги 11 класс · Manga18fx (18+)</div>
+        <div>Источники: MangaLib · ReManga · Com-X · MangaMir · WaManga · MangaDex · Книги 11 класс · Manga18fx (18+)</div>
       </div>
     </footer>
   );

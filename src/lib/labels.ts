@@ -19,6 +19,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   mangalib: 'MangaLib',
   remanga: 'ReManga',
   mangamir: 'MangaMir',
+  wamanga: 'WaManga',
   comx: 'Com-X',
   mangadex: 'MangaDex',
   manga18fx: 'Manga18fx',

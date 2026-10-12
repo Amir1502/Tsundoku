@@ -11,7 +11,7 @@ export const metadata: Metadata = {
   title: { default: 'Tsundoku — читалка манги, манхвы и книг', template: '%s · Tsundoku' },
   description:
     'Веб-читалка манхвы, манги и книг: единый каталог, библиотека, читалка литературы для сочинения и векторный AI-оверлей.',
-  keywords: ['читалка манги', 'манхва онлайн', 'tsundoku', 'книги', 'mangalib', 'remanga', 'mangamir', 'mangadex', 'com-x'],
+  keywords: ['читалка манги', 'манхва онлайн', 'tsundoku', 'книги', 'mangalib', 'remanga', 'mangamir', 'wamanga', 'mangadex', 'com-x'],
   openGraph: {
     title: 'Tsundoku — читалка манги, манхвы и книг',
     description: 'Все источники в одном каталоге, библиотека литературы, история и векторный AI-оверлей.',

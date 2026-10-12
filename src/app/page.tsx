@@ -33,6 +33,7 @@ const DEFAULT_SOURCES: SourceMeta[] = [
   { id: 'remanga', name: 'ReManga', lang: 'ru', baseUrl: '', isOnline: true, supportsSearch: true },
   { id: 'comx', name: 'Com-X', lang: 'ru', baseUrl: '', isOnline: true, supportsSearch: true },
   { id: 'mangamir', name: 'MangaMir', lang: 'ru', baseUrl: '', isOnline: true, supportsSearch: true },
+  { id: 'wamanga', name: 'WaManga', lang: 'ru', baseUrl: '', isOnline: true, supportsSearch: true },
   { id: 'mangadex', name: 'MangaDex', lang: 'ru/en', baseUrl: '', isOnline: true, supportsSearch: true },
 ];
 const ADULT_SOURCE: SourceMeta = {

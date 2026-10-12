@@ -8,11 +8,13 @@ import { mangadexSource } from './mangadex';
 import { mangalibSource } from './mangalib';
 import { mangamirSource } from './mangamir';
 import { remangaSource } from './remanga';
+import { wamangaSource } from './wamanga';
 
 export const SOURCES: Record<string, MangaSource> = {
   mangalib: mangalibSource,
   remanga: remangaSource,
   mangamir: mangamirSource,
+  wamanga: wamangaSource,
   comx: comxSource,
   mangadex: mangadexSource,
   manga18fx: manga18fxSource,
